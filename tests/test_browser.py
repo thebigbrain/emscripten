@@ -138,6 +138,9 @@ If manually bisecting:
     absolute_src_path2 = os.path.join(self.get_dir(), '.somefile.txt').replace('\\', '/')
     open(absolute_src_path2, 'w').write('''load me right before running the code please''')
     
+    absolute_src_path3 = os.path.join(self.get_dir(), 'some@file.txt').replace('\\', '/')
+    open(absolute_src_path3, 'w').write('''load me right before running the code please''')
+    
     def make_main(path):
       print 'make main at', path
       path = path.replace('\\', '\\\\').replace('"', '\\"') # Escape tricky path name for use inside a C string.
@@ -174,7 +177,9 @@ If manually bisecting:
       (absolute_src_path + "@/", "somefile.txt"),
       ("somefile.txt@/directory/file.txt", "/directory/file.txt"),
       ("somefile.txt@/directory/file.txt", "directory/file.txt"),
-      (absolute_src_path + "@/directory/file.txt", "directory/file.txt")]
+      (absolute_src_path + "@/directory/file.txt", "directory/file.txt"),
+      ("some@@file.txt@other.txt", "other.txt"),
+      ("some@@file.txt@some@@otherfile.txt", "some@otherfile.txt")]
 
     for test in test_cases:
       (srcpath, dstpath) = test
@@ -2129,16 +2134,17 @@ void *getBindBuffer() {
       ('runtime_misuse_2.cpp', ['--pre-js', 'pre_main.js'], 600),
       ('runtime_misuse_2.cpp', ['--pre-js', 'pre_runtime.js'], 601) # 601, because no main means we *do* run another call after exit()
     ]:
-      print '\n', filename, extra_args
-      print 'mem init, so async, call too early'
-      open(os.path.join(self.get_dir(), 'post.js'), 'w').write(post_prep + post_test + post_hook)
-      self.btest(filename, expected='600', args=['--post-js', 'post.js', '--memory-init-file', '1'] + extra_args)
-      print 'sync startup, call too late'
-      open(os.path.join(self.get_dir(), 'post.js'), 'w').write(post_prep + 'Module.postRun.push(function() { ' + post_test + ' });' + post_hook);
-      self.btest(filename, expected=str(second_code), args=['--post-js', 'post.js', '--memory-init-file', '0'] + extra_args)
-      print 'sync, runtime still alive, so all good'
-      open(os.path.join(self.get_dir(), 'post.js'), 'w').write(post_prep + 'expected_ok = true; Module.postRun.push(function() { ' + post_test + ' });' + post_hook);
-      self.btest(filename, expected='606', args=['--post-js', 'post.js', '--memory-init-file', '0', '-s', 'NO_EXIT_RUNTIME=1'] + extra_args)
+      for mode in [[], ['-s', 'WASM=1']]:
+        print '\n', filename, extra_args, mode
+        print 'mem init, so async, call too early'
+        open(os.path.join(self.get_dir(), 'post.js'), 'w').write(post_prep + post_test + post_hook)
+        self.btest(filename, expected='600', args=['--post-js', 'post.js', '--memory-init-file', '1'] + extra_args + mode)
+        print 'sync startup, call too late'
+        open(os.path.join(self.get_dir(), 'post.js'), 'w').write(post_prep + 'Module.postRun.push(function() { ' + post_test + ' });' + post_hook);
+        self.btest(filename, expected=str(second_code), args=['--post-js', 'post.js', '--memory-init-file', '0'] + extra_args + mode)
+        print 'sync, runtime still alive, so all good'
+        open(os.path.join(self.get_dir(), 'post.js'), 'w').write(post_prep + 'expected_ok = true; Module.postRun.push(function() { ' + post_test + ' });' + post_hook);
+        self.btest(filename, expected='606', args=['--post-js', 'post.js', '--memory-init-file', '0', '-s', 'NO_EXIT_RUNTIME=1'] + extra_args + mode)
 
   def test_cwrap_early(self):
     self.btest(os.path.join('browser', 'cwrap_early.cpp'), args=['-O2', '-s', 'ASSERTIONS=1', '--pre-js', path_from_root('tests', 'browser', 'cwrap_early.js')], expected='0')
@@ -2413,7 +2419,8 @@ open(filename, 'w').write(replaced)
     ''')
 
     def in_html(expected, args=[]):
-      Popen([PYTHON, EMCC, 'src.cpp', '-O2', '-g', '--shell-file', 'shell.html', '--pre-js', 'data.js', '-o', 'page.html'] + args).communicate()
+      Popen([PYTHON, EMCC, 'src.cpp', '-O2', '-g', '--shell-file', 'shell.html', '--pre-js', 'data.js', '-o', 'page.html', '-s', 'SAFE_HEAP=1', '-s', 'ASSERTIONS=1'] + args).communicate()
+      shutil.move('page.html.mem', os.path.join('sub', 'page.html.mem'))
       self.run_browser('page.html', None, '/report_result?' + expected)
 
     in_html('1')
